@@ -1,0 +1,1036 @@
+local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Nanzzz-id/Fyor-ui/refs/heads/main/Fyor%20ui%20v1.0"))()
+local Window = WindUI:CreateWindow("Fyor Hub")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local camera = Workspace.CurrentCamera
+local localPlayer = Players.LocalPlayer
+local FlickEnabled = false
+local FlickStrength = 0.12
+local WallCheck = true
+local FlickFOV = 80
+local FlickCooldown = 0.13
+local MaxDistance = 350
+local LastFlick = 0
+local AimbotEnabled = false
+local AimbotFOV = 120
+local AimbotSmooth = 0.25
+local AimPart = "Head"
+local ShowFOVCircle = true
+local HighlightESP = false
+local TracerESP = false
+local TracerThickness = 2
+local TracerColor = Color3.fromRGB(255, 0, 0)
+local HitboxEnabled = false
+local HitboxSize = 6
+local HitboxTransparency = 0.7
+local function expandHitbox(char)
+    if not char then return end
+    for _, name in {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"} do
+        local part = char:FindFirstChild(name)
+        if part then
+            part.Size = Vector3.new(HitboxSize, HitboxSize, HitboxSize)
+            part.Transparency = HitboxTransparency
+            part.Material = Enum.Material.ForceField
+            part.CanCollide = false
+        end
+    end
+end
+local function resetHitbox(char)
+    if not char then return end
+    for _, name in {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"} do
+        local part = char:FindFirstChild(name)
+        if part then
+            part.Size = name == "Head" and Vector3.new(1.2,1.2,1.2) or Vector3.new(2,2,1)
+            part.Transparency = 0
+            part.Material = Enum.Material.Plastic
+            part.CanCollide = true
+        end
+    end
+end
+task.spawn(function()
+    while task.wait(0.3) do
+        for _, plr in Players:GetPlayers() do
+            if plr ~= localPlayer and plr.Character then
+                if HitboxEnabled then
+                    expandHitbox(plr.Character)
+                else
+                    resetHitbox(plr.Character)
+                end
+            end
+        end
+    end
+end)
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Filled = false
+FOVCircle.Thickness = 2
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Transparency = 0
+FOVCircle.Visible = false
+FOVCircle.NumSides = 64
+local FOVCircleOutline = Drawing.new("Circle")
+FOVCircleOutline.Filled = false
+FOVCircleOutline.Thickness = 4
+FOVCircleOutline.Color = Color3.fromRGB(0, 0, 0)
+FOVCircleOutline.Transparency = 0
+FOVCircleOutline.Visible = false
+FOVCircleOutline.NumSides = 64
+local Tracers = {}
+local function isVisible(targetPart)
+    if not WallCheck then return true end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {localPlayer.Character or Workspace}
+    local result = Workspace:Raycast(camera.CFrame.Position, targetPart.Position - camera.CFrame.Position, params)
+    return not result or result.Instance:IsDescendantOf(targetPart.Parent)
+end
+local function getTargetPart(char)
+    if not char then return nil end
+    if AimPart == "Head" then 
+        return char:FindFirstChild("Head")
+    elseif AimPart == "HumanoidRootPart" then 
+        return char:FindFirstChild("HumanoidRootPart")
+    elseif AimPart == "Torso" then 
+        return char:FindFirstChild("UpperTorso") or char:FindFirstChild("LowerTorso") or char:FindFirstChild("HumanoidRootPart")
+    end
+    return char:FindFirstChild("Head")
+end
+local function updateESP()
+    for _, plr in Players:GetPlayers() do
+        if plr == localPlayer then continue end
+        local char = plr.Character
+        if not char then continue end
+        if HighlightESP then
+            if not char:FindFirstChild("Highlight_Zenith") then
+                local hl = Instance.new("Highlight", char)
+                hl.Name = "Highlight_Zenith"
+                hl.FillTransparency = 1
+                hl.OutlineColor = Color3.fromRGB(255, 0, 0)
+                hl.OutlineTransparency = 0
+            end
+        else
+            local hl = char:FindFirstChild("Highlight_Zenith")
+            if hl then hl:Destroy() end
+        end
+        if TracerESP then
+            if not Tracers[plr] then
+                local line = Drawing.new("Line")
+                line.Thickness = TracerThickness
+                line.Color = TracerColor
+                line.Transparency = 1
+                Tracers[plr] = line
+            end
+            local part = getTargetPart(char)
+            if part and isVisible(part) then
+                local pos, onScreen = camera:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    Tracers[plr].From = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y)
+                    Tracers[plr].To = Vector2.new(pos.X, pos.Y)
+                    Tracers[plr].Visible = true
+                else
+                    Tracers[plr].Visible = false
+                end
+            else
+                Tracers[plr].Visible = false
+            end
+        else
+            if Tracers[plr] then Tracers[plr].Visible = false end
+        end
+    end
+end
+Players.PlayerRemoving:Connect(function(plr)
+    if Tracers[plr] then Tracers[plr]:Remove() Tracers[plr] = nil end
+end)
+local function getClosestFlick()
+    local closest, shortest = nil, FlickFOV
+    local center = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y/2)
+    for _, plr in Players:GetPlayers() do
+        if plr == localPlayer then continue end
+        local char = plr.Character
+        local part = getTargetPart(char)
+        if part and (part.Position - camera.CFrame.Position).Magnitude <= MaxDistance then
+            local pos, onScreen = camera:WorldToViewportPoint(part.Position)
+            if onScreen and isVisible(part) then
+                local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                if dist < shortest then 
+                    shortest = dist 
+                    closest = part 
+                end
+            end
+        end
+    end
+    return closest
+end
+local function getAimbotTarget()
+    local closest, shortest = nil, AimbotFOV
+    local center = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y/2)
+    for _, plr in Players:GetPlayers() do
+        if plr == localPlayer then continue end
+        local char = plr.Character
+        local part = getTargetPart(char)
+        if part then
+            local pos, onScreen = camera:WorldToViewportPoint(part.Position)
+            if onScreen and (not WallCheck or isVisible(part)) then
+                local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                if dist < shortest then 
+                    shortest = dist 
+                    closest = part 
+                end
+            end
+        end
+    end
+    return closest
+end
+RunService.RenderStepped:Connect(function()
+    if AimbotEnabled then
+        local target = getAimbotTarget()
+        if target then
+            local dir = (target.Position - camera.CFrame.Position).Unit
+            camera.CFrame = camera.CFrame:Lerp(CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + dir), AimbotSmooth)
+        end
+    end
+    if FlickEnabled and tick() - LastFlick >= FlickCooldown then
+        local target = getClosestFlick()
+        if target then
+            local dir = (target.Position - camera.CFrame.Position).Unit
+            camera.CFrame = camera.CFrame:Lerp(CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + dir), FlickStrength)
+            LastFlick = tick()
+        end
+    end
+    local radius = AimbotEnabled and AimbotFOV or FlickFOV
+    local show = ShowFOVCircle and (AimbotEnabled or FlickEnabled)
+    local centerPos = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    FOVCircleOutline.Radius = radius + 1
+    FOVCircleOutline.Position = centerPos
+    FOVCircleOutline.Visible = show
+    FOVCircle.Radius = radius
+    FOVCircle.Position = centerPos
+    FOVCircle.Visible = show
+    updateESP()
+end)
+local HomeTab = Window:CreateTab("Home", "house")
+local banner = Instance.new("Frame", HomeTab.Scroll)
+banner.Size = UDim2.new(0.95, 0, 0, 72)
+banner.BackgroundColor3 = WindUI.CurrentTheme.Accent
+banner.BackgroundTransparency = 0.88
+Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 18)
+local bannerStroke = Instance.new("UIStroke", banner)
+bannerStroke.Color = WindUI.CurrentTheme.Accent
+bannerStroke.Thickness = 1
+bannerStroke.Transparency = 0.5
+local bannerBar = Instance.new("Frame", banner)
+bannerBar.Size = UDim2.new(0, 3, 0, 42)
+bannerBar.Position = UDim2.new(0, 14, 0.5, -21)
+bannerBar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", bannerBar).CornerRadius = UDim.new(1, 0)
+local bannerTitle = Instance.new("TextLabel", banner)
+bannerTitle.Size = UDim2.new(1, -40, 0, 28)
+bannerTitle.Position = UDim2.new(0, 26, 0, 12)
+bannerTitle.BackgroundTransparency = 1
+bannerTitle.Text = "Welcome, " .. localPlayer.DisplayName
+bannerTitle.TextColor3 = WindUI.CurrentTheme.Text
+bannerTitle.Font = Enum.Font.GothamBold
+bannerTitle.TextSize = 16
+bannerTitle.TextXAlignment = Enum.TextXAlignment.Left
+local bannerSub = Instance.new("TextLabel", banner)
+bannerSub.Size = UDim2.new(1, -40, 0, 18)
+bannerSub.Position = UDim2.new(0, 26, 0, 42)
+bannerSub.BackgroundTransparency = 1
+bannerSub.Text = "Fyor Hub | Quick Shot"
+bannerSub.TextColor3 = WindUI.CurrentTheme.SubText
+bannerSub.Font = Enum.Font.GothamMedium
+bannerSub.TextSize = 11
+bannerSub.TextXAlignment = Enum.TextXAlignment.Left
+local wnFrame = Instance.new("Frame", HomeTab.Scroll)
+wnFrame.Size = UDim2.new(0.95, 0, 0, 82)
+wnFrame.BackgroundColor3 = WindUI.CurrentTheme.Secondary
+wnFrame.BorderSizePixel = 0
+Instance.new("UICorner", wnFrame).CornerRadius = UDim.new(0, 18)
+Instance.new("UIStroke", wnFrame).Color = WindUI.CurrentTheme.Border
+local wnAccent = Instance.new("Frame", wnFrame)
+wnAccent.Size = UDim2.new(0, 3, 0, 28)
+wnAccent.Position = UDim2.new(0, 14, 0, 14)
+wnAccent.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", wnAccent).CornerRadius = UDim.new(1, 0)
+local wnTitle = Instance.new("TextLabel", wnFrame)
+wnTitle.Size = UDim2.new(1, -30, 0, 20)
+wnTitle.Position = UDim2.new(0, 26, 0, 14)
+wnTitle.BackgroundTransparency = 1
+wnTitle.Text = "WHAT'S NEW  ·  v1.0"
+wnTitle.Font = Enum.Font.GothamBold
+wnTitle.TextColor3 = WindUI.CurrentTheme.Accent
+wnTitle.TextSize = 10
+wnTitle.TextXAlignment = Enum.TextXAlignment.Left
+local wnList = Instance.new("TextLabel", wnFrame)
+wnList.Size = UDim2.new(1, -30, 0, 38)
+wnList.Position = UDim2.new(0, 26, 0, 36)
+wnList.BackgroundTransparency = 1
+wnList.Text = "- Flick, Aimbot, Hitbox Expander\n- Highlight & Tracer ESP\n- FOV Circle visible & centered"
+wnList.Font = Enum.Font.GothamMedium
+wnList.TextColor3 = WindUI.CurrentTheme.SubText
+wnList.TextSize = 10
+wnList.TextXAlignment = Enum.TextXAlignment.Left
+wnList.TextYAlignment = Enum.TextYAlignment.Top
+local statsContainer = Instance.new("Frame", HomeTab.Scroll)
+statsContainer.Size = UDim2.new(0.95, 0, 0, 58)
+statsContainer.BackgroundTransparency = 1
+local statLayout = Instance.new("UIListLayout", statsContainer)
+statLayout.FillDirection = Enum.FillDirection.Horizontal
+statLayout.Padding = UDim.new(0, 8)
+local function CreateStat(title, value)
+    local card = Instance.new("Frame", statsContainer)
+    card.Size = UDim2.new(0.5, -4, 1, 0)
+    card.BackgroundColor3 = WindUI.CurrentTheme.Secondary
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 18)
+    local stroke = Instance.new("UIStroke", card)
+    stroke.Color = WindUI.CurrentTheme.Border
+    stroke.Thickness = 1
+    local tl = Instance.new("TextLabel", card)
+    tl.Size = UDim2.new(1, -10, 0, 18)
+    tl.Position = UDim2.new(0, 12, 0, 8)
+    tl.Text = title:upper()
+    tl.BackgroundTransparency = 1
+    tl.TextColor3 = WindUI.CurrentTheme.SubText
+    tl.Font = Enum.Font.Gotham
+    tl.TextSize = 9
+    tl.TextXAlignment = Enum.TextXAlignment.Left
+    local vl = Instance.new("TextLabel", card)
+    vl.Size = UDim2.new(1, -10, 0, 20)
+    vl.Position = UDim2.new(0, 12, 0, 28)
+    vl.Text = value
+    vl.BackgroundTransparency = 1
+    vl.TextColor3 = WindUI.CurrentTheme.Accent
+    vl.Font = Enum.Font.GothamBold
+    vl.TextSize = 12
+    vl.TextXAlignment = Enum.TextXAlignment.Left
+    return vl
+end
+CreateStat("Account Age", localPlayer.AccountAge .. " Days")
+local regionVal = CreateStat("Server Region", "Loading...")
+task.spawn(function()
+    local ok, res = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(
+            game:HttpGet("http://ip-api.com/json/")
+        ).countryCode
+    end)
+    regionVal.Text = (ok and res) and res or "Global"
+end)
+HomeTab:CreateButton("Rejoin Server", function()
+    WindUI:Notify("Server", "Rejoining server, please wait...", 3)
+    game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
+end, "rotate-ccw")
+HomeTab:CreateButton("Copy Job ID", function()
+    pcall(function() setclipboard(game.JobId) end)
+    WindUI:Notify("Clipboard", "Job ID copied successfully.", 2)
+end, "clipboard-copy")
+local subTabs   = HomeTab:CreateTabDropdown("More", {"Settings", "About"}, "more-horizontal")
+local SettingsTab = subTabs[1]
+local AboutTab    = subTabs[2]
+local MainTab = Window:CreateTab("Main", "crosshair")
+MainTab:CreateLabel("Flick & Aimbot")
+MainTab:CreateDivider("── Flick ──")
+MainTab:CreateToggle("Enable Flick", false, function(v) FlickEnabled = v end)
+MainTab:CreateSlider("Flick FOV", 20, 200, 80, function(v) FlickFOV = v end)
+MainTab:CreateSlider("Flick Strength", 5, 50, 12, function(v) FlickStrength = v / 100 end)
+MainTab:CreateSlider("Flick Cooldown", 5, 30, 13, function(v) FlickCooldown = v / 100 end)
+MainTab:CreateDivider("── Aimbot ──")
+MainTab:CreateToggle("Enable Aimbot", false, function(v) AimbotEnabled = v end)
+MainTab:CreateSlider("Aimbot FOV", 20, 400, 120, function(v) AimbotFOV = v end)
+MainTab:CreateSlider("Aimbot Smooth", 5, 100, 25, function(v) AimbotSmooth = v / 100 end)
+MainTab:CreateDivider("── Aim Part ──")
+MainTab:CreateDropdown("Aim Part", {"Head", "HumanoidRootPart", "Torso"}, function(v) AimPart = v end)
+MainTab:CreateDivider("── General ──")
+MainTab:CreateToggle("Show FOV Circle", true, function(v) ShowFOVCircle = v end)
+MainTab:CreateToggle("Wall Check", true, function(v) WallCheck = v end)
+MainTab:CreateDivider("── Hitbox Expander ──")
+MainTab:CreateToggle("Enable Hitbox", false, function(v)
+    HitboxEnabled = v
+    WindUI:Notify("Hitbox", "Hitbox Expander: " .. (v and "ON" or "OFF"), 2)
+end)
+MainTab:CreateSlider("Hitbox Size", 2, 25, 6, function(v) HitboxSize = v end)
+MainTab:CreateSlider("Hitbox Transparency", 0, 9, 7, function(v) HitboxTransparency = v / 10 end)
+local ESPTab = Window:CreateTab("ESP", "eye")
+ESPTab:CreateLabel("ESP & Visual")
+ESPTab:CreateDivider("── Highlight ──")
+ESPTab:CreateToggle("Highlight ESP", false, function(v) HighlightESP = v end)
+ESPTab:CreateDivider("── Tracer ──")
+ESPTab:CreateToggle("Tracer ESP", false, function(v) TracerESP = v end)
+ESPTab:CreateSlider("Tracer Thickness", 1, 10, 2, function(v)
+    TracerThickness = v
+    for _, line in pairs(Tracers) do if line then line.Thickness = v end end
+end)
+ESPTab:CreateDropdown("Tracer Color", {"Red", "Green", "Blue", "White", "Yellow", "Purple"}, function(v)
+    local c = {Red=Color3.fromRGB(255,0,0), Green=Color3.fromRGB(0,255,0), Blue=Color3.fromRGB(0,120,255), White=Color3.fromRGB(255,255,255), Yellow=Color3.fromRGB(255,255,0), Purple=Color3.fromRGB(180,0,255)}
+    TracerColor = c[v] or Color3.fromRGB(255,0,0)
+    for _, line in pairs(Tracers) do if line then line.Color = TracerColor end end
+end)
+local function Tween(obj, info, goal)
+    local TweenService = game:GetService("TweenService")
+    local t = TweenService:Create(obj,
+        TweenInfo.new(info.Time or 0.3, info.Style or Enum.EasingStyle.Quart, info.Dir or Enum.EasingDirection.Out),
+        goal)
+    t:Play(); return t
+end
+local Icons = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/Icons/main/Main-v2.lua"))()
+Icons.SetIconsType("lucide")
+local function GetIcon(name)
+    local ok, result = pcall(function() return Icons.Icon2(name) end)
+    if ok and result then return result end
+    return nil
+end
+local function ApplyIcon(img, iconData)
+    if not iconData then return end
+    local isStr = typeof(iconData) == "string"
+    img.Image = isStr and iconData or iconData[1]
+    if not isStr and iconData[2] then
+        img.ImageRectSize = iconData[2].ImageRectSize
+        img.ImageRectOffset = iconData[2].ImageRectPosition
+    end
+end
+local function MakeSettingsCard(parent, height)
+    local card = Instance.new("Frame", parent)
+    card.Size = UDim2.new(0.95, 0, 0, height or 52)
+    card.BackgroundColor3 = WindUI.CurrentTheme.Secondary
+    card.BackgroundTransparency = 0.15
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 16)
+    local stroke = Instance.new("UIStroke", card)
+    stroke.Color = WindUI.CurrentTheme.Border
+    stroke.Thickness = 1
+    return card
+end
+local function MakeSectionHeader(parent, icon, title, subtitle)
+    local hdr = Instance.new("Frame", parent)
+    hdr.Size = UDim2.new(0.95, 0, 0, 48)
+    hdr.BackgroundTransparency = 1
+    local iconBox = Instance.new("Frame", hdr)
+    iconBox.Size = UDim2.new(0, 32, 0, 32)
+    iconBox.Position = UDim2.new(0, 0, 0.5, -16)
+    iconBox.BackgroundColor3 = WindUI.CurrentTheme.Accent
+    iconBox.BackgroundTransparency = 0.82
+    Instance.new("UICorner", iconBox).CornerRadius = UDim.new(0, 10)
+    local iconStroke = Instance.new("UIStroke", iconBox)
+    iconStroke.Color = WindUI.CurrentTheme.Accent
+    iconStroke.Thickness = 1
+    iconStroke.Transparency = 0.5
+    local ico = Instance.new("ImageLabel", iconBox)
+    ico.Size = UDim2.new(0, 15, 0, 15)
+    ico.Position = UDim2.new(0.5, -7.5, 0.5, -7.5)
+    ico.BackgroundTransparency = 1
+    ico.ImageColor3 = WindUI.CurrentTheme.Accent
+    ico.ScaleType = Enum.ScaleType.Fit
+    task.spawn(function() ApplyIcon(ico, GetIcon(icon)) end)
+    local titleLbl = Instance.new("TextLabel", hdr)
+    titleLbl.Size = UDim2.new(1, -44, 0, 16)
+    titleLbl.Position = UDim2.new(0, 44, 0, 8)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text = title
+    titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextColor3 = WindUI.CurrentTheme.Text
+    titleLbl.TextSize = 12
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    local subLbl = Instance.new("TextLabel", hdr)
+    subLbl.Size = UDim2.new(1, -44, 0, 14)
+    subLbl.Position = UDim2.new(0, 44, 0, 26)
+    subLbl.BackgroundTransparency = 1
+    subLbl.Text = subtitle
+    subLbl.Font = Enum.Font.Gotham
+    subLbl.TextColor3 = WindUI.CurrentTheme.SubText
+    subLbl.TextSize = 10
+    subLbl.TextXAlignment = Enum.TextXAlignment.Left
+end
+local currentKey = Enum.KeyCode.RightShift
+local bindingActive = false
+MakeSectionHeader(SettingsTab.Scroll, "keyboard", "Toggle Keybind", "Key used to show / hide the UI")
+local keybindFrame = MakeSettingsCard(SettingsTab.Scroll, 52)
+local kbBar = Instance.new("Frame", keybindFrame)
+kbBar.Size = UDim2.new(0, 3, 0, 28)
+kbBar.Position = UDim2.new(0, 0, 0.5, -14)
+kbBar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", kbBar).CornerRadius = UDim.new(1, 0)
+local kbIco = Instance.new("ImageLabel", keybindFrame)
+kbIco.Size = UDim2.new(0, 14, 0, 14)
+kbIco.Position = UDim2.new(0, 14, 0.5, -7)
+kbIco.BackgroundTransparency = 1
+kbIco.ImageColor3 = WindUI.CurrentTheme.Accent
+kbIco.ScaleType = Enum.ScaleType.Fit
+task.spawn(function() ApplyIcon(kbIco, GetIcon("keyboard")) end)
+local kbLbl = Instance.new("TextLabel", keybindFrame)
+kbLbl.Size = UDim2.new(0.55, 0, 1, 0)
+kbLbl.Position = UDim2.new(0, 34, 0, 0)
+kbLbl.BackgroundTransparency = 1
+kbLbl.Text = "Toggle Key"
+kbLbl.Font = Enum.Font.GothamMedium
+kbLbl.TextColor3 = WindUI.CurrentTheme.Text
+kbLbl.TextSize = 12
+kbLbl.TextXAlignment = Enum.TextXAlignment.Left
+local kbBtn = Instance.new("TextButton", keybindFrame)
+kbBtn.Size = UDim2.new(0, 96, 0, 28)
+kbBtn.Position = UDim2.new(1, -108, 0.5, -14)
+kbBtn.BackgroundColor3 = WindUI.CurrentTheme.Accent
+kbBtn.BackgroundTransparency = 0.8
+kbBtn.Text = tostring(currentKey):gsub("Enum.KeyCode.", "")
+kbBtn.Font = Enum.Font.GothamBold
+kbBtn.TextColor3 = WindUI.CurrentTheme.Accent
+kbBtn.TextSize = 10
+Instance.new("UICorner", kbBtn).CornerRadius = UDim.new(0, 10)
+local kbBtnStroke = Instance.new("UIStroke", kbBtn)
+kbBtnStroke.Color = WindUI.CurrentTheme.Accent
+kbBtnStroke.Thickness = 1
+kbBtnStroke.Transparency = 0.45
+kbBtn.MouseEnter:Connect(function() Tween(kbBtn, {Time=0.15}, {BackgroundTransparency=0.55}) end)
+kbBtn.MouseLeave:Connect(function() Tween(kbBtn, {Time=0.15}, {BackgroundTransparency=0.8}) end)
+kbBtn.MouseButton1Click:Connect(function()
+    if bindingActive then return end
+    bindingActive = true
+    kbBtn.Text = "· · ·"
+    kbBtn.TextColor3 = WindUI.CurrentTheme.SubText
+    Tween(kbBtn, {Time=0.15}, {BackgroundTransparency=0.6})
+    local conn
+    conn = game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            currentKey = input.KeyCode
+            kbBtn.Text = tostring(currentKey):gsub("Enum.KeyCode.", "")
+            kbBtn.TextColor3 = WindUI.CurrentTheme.Accent
+            Tween(kbBtn, {Time=0.15}, {BackgroundTransparency=0.8})
+            bindingActive = false
+            conn:Disconnect()
+            WindUI:Notify("Keybind", "Toggle key set to: " .. tostring(currentKey):gsub("Enum.KeyCode.", ""), 2)
+        end
+    end)
+end)
+game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if not bindingActive and input.KeyCode == currentKey then
+        WindUI.Closed = not WindUI.Closed
+        local c2 = WindUI.ScreenGui and WindUI.ScreenGui:FindFirstChild("UI_Container")
+        local m2 = c2 and c2:FindFirstChild("MainFrame")
+        local d2 = c2 and c2:FindFirstChild("ExternalDrag")
+        if c2 and m2 then
+            if WindUI.Closed then
+                Tween(m2, {Time=0.3, Style=Enum.EasingStyle.Quart, Dir=Enum.EasingDirection.In}, {GroupTransparency=1, Size=UDim2.new(0,540,0,0)})
+                if d2 then Tween(d2, {Time=0.2}, {BackgroundTransparency=1}) end
+                task.delay(0.32, function() c2.Visible = false end)
+            else
+                c2.Visible = true
+                m2.Size = UDim2.new(0,540,0,0)
+                m2.GroupTransparency = 1
+                Tween(m2, {Time=0.45, Style=Enum.EasingStyle.Back}, {Size=UDim2.new(1,0,1,0), GroupTransparency=0})
+                if d2 then Tween(d2, {Time=0.3}, {BackgroundTransparency=0.6}) end
+            end
+        end
+    end
+end)
+MakeSectionHeader(SettingsTab.Scroll, "monitor", "Display", "Window appearance and layout")
+local fpsCard = MakeSettingsCard(SettingsTab.Scroll, 52)
+local fpsBar = Instance.new("Frame", fpsCard)
+fpsBar.Size = UDim2.new(0, 3, 0, 28)
+fpsBar.Position = UDim2.new(0, 0, 0.5, -14)
+fpsBar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", fpsBar).CornerRadius = UDim.new(1, 0)
+local fpsIco2 = Instance.new("ImageLabel", fpsCard)
+fpsIco2.Size = UDim2.new(0, 14, 0, 14)
+fpsIco2.Position = UDim2.new(0, 14, 0.5, -7)
+fpsIco2.BackgroundTransparency = 1
+fpsIco2.ImageColor3 = WindUI.CurrentTheme.SubText
+fpsIco2.ScaleType = Enum.ScaleType.Fit
+task.spawn(function() ApplyIcon(fpsIco2, GetIcon("activity")) end)
+local fpsCardLbl = Instance.new("TextLabel", fpsCard)
+fpsCardLbl.Size = UDim2.new(0.55, 0, 0, 16)
+fpsCardLbl.Position = UDim2.new(0, 34, 0, 10)
+fpsCardLbl.BackgroundTransparency = 1
+fpsCardLbl.Text = "Show FPS Counter"
+fpsCardLbl.Font = Enum.Font.GothamBold
+fpsCardLbl.TextColor3 = WindUI.CurrentTheme.Text
+fpsCardLbl.TextSize = 12
+fpsCardLbl.TextXAlignment = Enum.TextXAlignment.Left
+local fpsCardSub = Instance.new("TextLabel", fpsCard)
+fpsCardSub.Size = UDim2.new(0.55, 0, 0, 14)
+fpsCardSub.Position = UDim2.new(0, 34, 0, 28)
+fpsCardSub.BackgroundTransparency = 1
+fpsCardSub.Text = "Display realtime FPS badge"
+fpsCardSub.Font = Enum.Font.Gotham
+fpsCardSub.TextColor3 = WindUI.CurrentTheme.SubText
+fpsCardSub.TextSize = 9
+fpsCardSub.TextXAlignment = Enum.TextXAlignment.Left
+local fpsToggleState = true
+local fpsToggleBtn = Instance.new("TextButton", fpsCard)
+fpsToggleBtn.Size = UDim2.new(0, 42, 0, 22)
+fpsToggleBtn.Position = UDim2.new(1, -56, 0.5, -11)
+fpsToggleBtn.BackgroundColor3 = WindUI.CurrentTheme.Accent
+fpsToggleBtn.Text = ""
+Instance.new("UICorner", fpsToggleBtn).CornerRadius = UDim.new(1, 0)
+local fpsToggleKnob = Instance.new("Frame", fpsToggleBtn)
+fpsToggleKnob.Size = UDim2.new(0, 16, 0, 16)
+fpsToggleKnob.Position = UDim2.new(1, -19, 0.5, -8)
+fpsToggleKnob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", fpsToggleKnob).CornerRadius = UDim.new(1, 0)
+fpsToggleBtn.MouseButton1Click:Connect(function()
+    fpsToggleState = not fpsToggleState
+    local tb = WindUI.ScreenGui and WindUI.ScreenGui:FindFirstChild("UI_Container")
+    local mf = tb and tb:FindFirstChild("MainFrame")
+    local topb = mf and mf:FindFirstChild("TopBar")
+    local fps = topb and topb:FindFirstChild("FPSBadge")
+    if fps then fps.Visible = fpsToggleState end
+    if fpsToggleState then
+        Tween(fpsToggleBtn, {Time=0.2}, {BackgroundColor3=WindUI.CurrentTheme.Accent})
+        Tween(fpsToggleKnob, {Time=0.2}, {Position=UDim2.new(1,-19,0.5,-8)})
+    else
+        Tween(fpsToggleBtn, {Time=0.2}, {BackgroundColor3=WindUI.CurrentTheme.Border})
+        Tween(fpsToggleKnob, {Time=0.2}, {Position=UDim2.new(0,3,0.5,-8)})
+    end
+end)
+local badgeCard = MakeSettingsCard(SettingsTab.Scroll, 52)
+local badgeBar = Instance.new("Frame", badgeCard)
+badgeBar.Size = UDim2.new(0, 3, 0, 28)
+badgeBar.Position = UDim2.new(0, 0, 0.5, -14)
+badgeBar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", badgeBar).CornerRadius = UDim.new(1, 0)
+local badgeIco = Instance.new("ImageLabel", badgeCard)
+badgeIco.Size = UDim2.new(0, 14, 0, 14)
+badgeIco.Position = UDim2.new(0, 14, 0.5, -7)
+badgeIco.BackgroundTransparency = 1
+badgeIco.ImageColor3 = WindUI.CurrentTheme.SubText
+badgeIco.ScaleType = Enum.ScaleType.Fit
+task.spawn(function() ApplyIcon(badgeIco, GetIcon("tag")) end)
+local badgeCardLbl = Instance.new("TextLabel", badgeCard)
+badgeCardLbl.Size = UDim2.new(0.55, 0, 0, 16)
+badgeCardLbl.Position = UDim2.new(0, 34, 0, 10)
+badgeCardLbl.BackgroundTransparency = 1
+badgeCardLbl.Text = "Show FREE Badge"
+badgeCardLbl.Font = Enum.Font.GothamBold
+badgeCardLbl.TextColor3 = WindUI.CurrentTheme.Text
+badgeCardLbl.TextSize = 12
+badgeCardLbl.TextXAlignment = Enum.TextXAlignment.Left
+local badgeCardSub = Instance.new("TextLabel", badgeCard)
+badgeCardSub.Size = UDim2.new(0.55, 0, 0, 14)
+badgeCardSub.Position = UDim2.new(0, 34, 0, 28)
+badgeCardSub.BackgroundTransparency = 1
+badgeCardSub.Text = "Display FREE label on titlebar"
+badgeCardSub.Font = Enum.Font.Gotham
+badgeCardSub.TextColor3 = WindUI.CurrentTheme.SubText
+badgeCardSub.TextSize = 9
+badgeCardSub.TextXAlignment = Enum.TextXAlignment.Left
+local badgeToggleState = true
+local badgeToggleBtn = Instance.new("TextButton", badgeCard)
+badgeToggleBtn.Size = UDim2.new(0, 42, 0, 22)
+badgeToggleBtn.Position = UDim2.new(1, -56, 0.5, -11)
+badgeToggleBtn.BackgroundColor3 = WindUI.CurrentTheme.Accent
+badgeToggleBtn.Text = ""
+Instance.new("UICorner", badgeToggleBtn).CornerRadius = UDim.new(1, 0)
+local badgeToggleKnob = Instance.new("Frame", badgeToggleBtn)
+badgeToggleKnob.Size = UDim2.new(0, 16, 0, 16)
+badgeToggleKnob.Position = UDim2.new(1, -19, 0.5, -8)
+badgeToggleKnob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", badgeToggleKnob).CornerRadius = UDim.new(1, 0)
+badgeToggleBtn.MouseButton1Click:Connect(function()
+    badgeToggleState = not badgeToggleState
+    local tb = WindUI.ScreenGui and WindUI.ScreenGui:FindFirstChild("UI_Container")
+    local mf = tb and tb:FindFirstChild("MainFrame")
+    local topb = mf and mf:FindFirstChild("TopBar")
+    local badge = topb and topb:FindFirstChild("FREEBadge")
+    if badge then badge.Visible = badgeToggleState end
+    if badgeToggleState then
+        Tween(badgeToggleBtn, {Time=0.2}, {BackgroundColor3=WindUI.CurrentTheme.Accent})
+        Tween(badgeToggleKnob, {Time=0.2}, {Position=UDim2.new(1,-19,0.5,-8)})
+    else
+        Tween(badgeToggleBtn, {Time=0.2}, {BackgroundColor3=WindUI.CurrentTheme.Border})
+        Tween(badgeToggleKnob, {Time=0.2}, {Position=UDim2.new(0,3,0.5,-8)})
+    end
+end)
+local scaleCard = MakeSettingsCard(SettingsTab.Scroll, 52)
+local scaleBar = Instance.new("Frame", scaleCard)
+scaleBar.Size = UDim2.new(0, 3, 0, 28)
+scaleBar.Position = UDim2.new(0, 0, 0.5, -14)
+scaleBar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", scaleBar).CornerRadius = UDim.new(1, 0)
+local scaleIco = Instance.new("ImageLabel", scaleCard)
+scaleIco.Size = UDim2.new(0, 14, 0, 14)
+scaleIco.Position = UDim2.new(0, 14, 0.5, -7)
+scaleIco.BackgroundTransparency = 1
+scaleIco.ImageColor3 = WindUI.CurrentTheme.SubText
+scaleIco.ScaleType = Enum.ScaleType.Fit
+task.spawn(function() ApplyIcon(scaleIco, GetIcon("maximize-2")) end)
+local scaleLbl = Instance.new("TextLabel", scaleCard)
+scaleLbl.Size = UDim2.new(0.45, 0, 0, 16)
+scaleLbl.Position = UDim2.new(0, 34, 0, 10)
+scaleLbl.BackgroundTransparency = 1
+scaleLbl.Text = "UI Scale"
+scaleLbl.Font = Enum.Font.GothamBold
+scaleLbl.TextColor3 = WindUI.CurrentTheme.Text
+scaleLbl.TextSize = 12
+scaleLbl.TextXAlignment = Enum.TextXAlignment.Left
+local scaleSub = Instance.new("TextLabel", scaleCard)
+scaleSub.Size = UDim2.new(0.45, 0, 0, 14)
+scaleSub.Position = UDim2.new(0, 34, 0, 28)
+scaleSub.BackgroundTransparency = 1
+scaleSub.Text = "Window size preset"
+scaleSub.Font = Enum.Font.Gotham
+scaleSub.TextColor3 = WindUI.CurrentTheme.SubText
+scaleSub.TextSize = 9
+scaleSub.TextXAlignment = Enum.TextXAlignment.Left
+local scaleOptions = {"Small", "Normal", "Large"}
+local scaleIdx = 2
+local scaleValueLbl = Instance.new("TextLabel", scaleCard)
+scaleValueLbl.Size = UDim2.new(0, 48, 0, 22)
+scaleValueLbl.Position = UDim2.new(1, -140, 0.5, -11)
+scaleValueLbl.BackgroundTransparency = 1
+scaleValueLbl.Text = scaleOptions[scaleIdx]
+scaleValueLbl.Font = Enum.Font.GothamBold
+scaleValueLbl.TextColor3 = WindUI.CurrentTheme.Accent
+scaleValueLbl.TextSize = 11
+scaleValueLbl.TextXAlignment = Enum.TextXAlignment.Center
+local scalePrev = Instance.new("TextButton", scaleCard)
+scalePrev.Size = UDim2.new(0, 28, 0, 28)
+scalePrev.Position = UDim2.new(1, -112, 0.5, -14)
+scalePrev.BackgroundColor3 = WindUI.CurrentTheme.Tertiary
+scalePrev.Text = "‹"
+scalePrev.Font = Enum.Font.GothamBold
+scalePrev.TextColor3 = WindUI.CurrentTheme.SubText
+scalePrev.TextSize = 14
+Instance.new("UICorner", scalePrev).CornerRadius = UDim.new(0, 8)
+local scaleNext = Instance.new("TextButton", scaleCard)
+scaleNext.Size = UDim2.new(0, 28, 0, 28)
+scaleNext.Position = UDim2.new(1, -56, 0.5, -14)
+scaleNext.BackgroundColor3 = WindUI.CurrentTheme.Tertiary
+scaleNext.Text = "›"
+scaleNext.Font = Enum.Font.GothamBold
+scaleNext.TextColor3 = WindUI.CurrentTheme.SubText
+scaleNext.TextSize = 14
+Instance.new("UICorner", scaleNext).CornerRadius = UDim.new(0, 8)
+local function ApplyScale()
+    local v = scaleOptions[scaleIdx]
+    scaleValueLbl.Text = v
+    local tb = WindUI.ScreenGui and WindUI.ScreenGui:FindFirstChild("UI_Container")
+    local scales = {Small=UDim2.new(0,440,0,330), Normal=UDim2.new(0,540,0,390), Large=UDim2.new(0,660,0,460)}
+    if tb and scales[v] then tb.Size = scales[v] end
+    WindUI:Notify("Settings", "UI Scale set to " .. v, 2)
+end
+scalePrev.MouseButton1Click:Connect(function()
+    scaleIdx = scaleIdx > 1 and scaleIdx - 1 or #scaleOptions
+    ApplyScale()
+end)
+scaleNext.MouseButton1Click:Connect(function()
+    scaleIdx = scaleIdx < #scaleOptions and scaleIdx + 1 or 1
+    ApplyScale()
+end)
+MakeSectionHeader(SettingsTab.Scroll, "bell", "Notifications", "Configure alert behavior")
+local notifCard = MakeSettingsCard(SettingsTab.Scroll, 52)
+local notifBar = Instance.new("Frame", notifCard)
+notifBar.Size = UDim2.new(0, 3, 0, 28)
+notifBar.Position = UDim2.new(0, 0, 0.5, -14)
+notifBar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", notifBar).CornerRadius = UDim.new(1, 0)
+local notifIco = Instance.new("ImageLabel", notifCard)
+notifIco.Size = UDim2.new(0, 14, 0, 14)
+notifIco.Position = UDim2.new(0, 14, 0.5, -7)
+notifIco.BackgroundTransparency = 1
+notifIco.ImageColor3 = WindUI.CurrentTheme.SubText
+notifIco.ScaleType = Enum.ScaleType.Fit
+task.spawn(function() ApplyIcon(notifIco, GetIcon("bell")) end)
+local notifLbl = Instance.new("TextLabel", notifCard)
+notifLbl.Size = UDim2.new(0.55, 0, 0, 16)
+notifLbl.Position = UDim2.new(0, 34, 0, 10)
+notifLbl.BackgroundTransparency = 1
+notifLbl.Text = "Enable Notifications"
+notifLbl.Font = Enum.Font.GothamBold
+notifLbl.TextColor3 = WindUI.CurrentTheme.Text
+notifLbl.TextSize = 12
+notifLbl.TextXAlignment = Enum.TextXAlignment.Left
+local notifSub = Instance.new("TextLabel", notifCard)
+notifSub.Size = UDim2.new(0.55, 0, 0, 14)
+notifSub.Position = UDim2.new(0, 34, 0, 28)
+notifSub.BackgroundTransparency = 1
+notifSub.Text = "Show popup alerts in-game"
+notifSub.Font = Enum.Font.Gotham
+notifSub.TextColor3 = WindUI.CurrentTheme.SubText
+notifSub.TextSize = 9
+notifSub.TextXAlignment = Enum.TextXAlignment.Left
+local notifToggleState = true
+local notifToggleBtn = Instance.new("TextButton", notifCard)
+notifToggleBtn.Size = UDim2.new(0, 42, 0, 22)
+notifToggleBtn.Position = UDim2.new(1, -56, 0.5, -11)
+notifToggleBtn.BackgroundColor3 = WindUI.CurrentTheme.Accent
+notifToggleBtn.Text = ""
+Instance.new("UICorner", notifToggleBtn).CornerRadius = UDim.new(1, 0)
+local notifKnob = Instance.new("Frame", notifToggleBtn)
+notifKnob.Size = UDim2.new(0, 16, 0, 16)
+notifKnob.Position = UDim2.new(1, -19, 0.5, -8)
+notifKnob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", notifKnob).CornerRadius = UDim.new(1, 0)
+notifToggleBtn.MouseButton1Click:Connect(function()
+    notifToggleState = not notifToggleState
+    if notifToggleState then
+        Tween(notifToggleBtn, {Time=0.2}, {BackgroundColor3=WindUI.CurrentTheme.Accent})
+        Tween(notifKnob, {Time=0.2}, {Position=UDim2.new(1,-19,0.5,-8)})
+    else
+        Tween(notifToggleBtn, {Time=0.2}, {BackgroundColor3=WindUI.CurrentTheme.Border})
+        Tween(notifKnob, {Time=0.2}, {Position=UDim2.new(0,3,0.5,-8)})
+    end
+end)
+MakeSectionHeader(SettingsTab.Scroll, "save", "Configuration", "Save and reset your settings")
+local saveFrame = MakeSettingsCard(SettingsTab.Scroll, 52)
+local sfBar = Instance.new("Frame", saveFrame)
+sfBar.Size = UDim2.new(0, 3, 0, 28)
+sfBar.Position = UDim2.new(0, 0, 0.5, -14)
+sfBar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", sfBar).CornerRadius = UDim.new(1, 0)
+local sfIco = Instance.new("ImageLabel", saveFrame)
+sfIco.Size = UDim2.new(0, 14, 0, 14)
+sfIco.Position = UDim2.new(0, 14, 0.5, -7)
+sfIco.BackgroundTransparency = 1
+sfIco.ImageColor3 = WindUI.CurrentTheme.Accent
+sfIco.ScaleType = Enum.ScaleType.Fit
+task.spawn(function() ApplyIcon(sfIco, GetIcon("save")) end)
+local sfLbl = Instance.new("TextLabel", saveFrame)
+sfLbl.Size = UDim2.new(0.45, 0, 0, 16)
+sfLbl.Position = UDim2.new(0, 34, 0, 10)
+sfLbl.BackgroundTransparency = 1
+sfLbl.Text = "Save Config"
+sfLbl.Font = Enum.Font.GothamBold
+sfLbl.TextColor3 = WindUI.CurrentTheme.Text
+sfLbl.TextSize = 12
+sfLbl.TextXAlignment = Enum.TextXAlignment.Left
+local sfSubLbl = Instance.new("TextLabel", saveFrame)
+sfSubLbl.Size = UDim2.new(0.45, 0, 0, 14)
+sfSubLbl.Position = UDim2.new(0, 34, 0, 28)
+sfSubLbl.BackgroundTransparency = 1
+sfSubLbl.Text = "Persist your configuration"
+sfSubLbl.Font = Enum.Font.Gotham
+sfSubLbl.TextColor3 = WindUI.CurrentTheme.SubText
+sfSubLbl.TextSize = 9
+sfSubLbl.TextXAlignment = Enum.TextXAlignment.Left
+local saveConfirmed = false
+local saveConfirmTimer = nil
+local saveBtn = Instance.new("TextButton", saveFrame)
+saveBtn.Size = UDim2.new(0, 80, 0, 28)
+saveBtn.Position = UDim2.new(1, -94, 0.5, -14)
+saveBtn.BackgroundColor3 = WindUI.CurrentTheme.Accent
+saveBtn.BackgroundTransparency = 0.78
+saveBtn.Text = "Save"
+saveBtn.Font = Enum.Font.GothamBold
+saveBtn.TextColor3 = WindUI.CurrentTheme.Accent
+saveBtn.TextSize = 10
+Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0, 10)
+local saveBtnStroke = Instance.new("UIStroke", saveBtn)
+saveBtnStroke.Color = WindUI.CurrentTheme.Accent
+saveBtnStroke.Thickness = 1
+saveBtnStroke.Transparency = 0.5
+saveBtn.MouseEnter:Connect(function() Tween(saveBtn, {Time=0.15}, {BackgroundTransparency=0.5}) end)
+saveBtn.MouseLeave:Connect(function() Tween(saveBtn, {Time=0.15}, {BackgroundTransparency=0.78}) end)
+saveBtn.MouseButton1Click:Connect(function()
+    if not saveConfirmed then
+        saveConfirmed = true
+        saveBtn.Text = "Confirm?"
+        saveBtn.TextColor3 = Color3.fromRGB(255, 210, 60)
+        Tween(saveBtn, {Time=0.15}, {BackgroundTransparency=0.5})
+        if saveConfirmTimer then saveConfirmTimer:Cancel() end
+        saveConfirmTimer = task.delay(2.5, function()
+            saveConfirmed = false
+            saveBtn.Text = "Save"
+            saveBtn.TextColor3 = WindUI.CurrentTheme.Accent
+            Tween(saveBtn, {Time=0.2}, {BackgroundTransparency=0.78})
+        end)
+    else
+        saveConfirmed = false
+        saveBtn.Text = "Saved."
+        saveBtn.TextColor3 = Color3.fromRGB(80, 210, 130)
+        Tween(saveBtn, {Time=0.15}, {BackgroundTransparency=0.6})
+        WindUI:Notify("Settings", "Configuration saved successfully.", 3)
+        task.delay(2, function()
+            saveBtn.Text = "Save"
+            saveBtn.TextColor3 = WindUI.CurrentTheme.Accent
+            Tween(saveBtn, {Time=0.2}, {BackgroundTransparency=0.78})
+        end)
+    end
+end)
+local resetCard = MakeSettingsCard(SettingsTab.Scroll, 52)
+local resetBar = Instance.new("Frame", resetCard)
+resetBar.Size = UDim2.new(0, 3, 0, 28)
+resetBar.Position = UDim2.new(0, 0, 0.5, -14)
+resetBar.BackgroundColor3 = Color3.fromRGB(210, 60, 60)
+Instance.new("UICorner", resetBar).CornerRadius = UDim.new(1, 0)
+local resetIco = Instance.new("ImageLabel", resetCard)
+resetIco.Size = UDim2.new(0, 14, 0, 14)
+resetIco.Position = UDim2.new(0, 14, 0.5, -7)
+resetIco.BackgroundTransparency = 1
+resetIco.ImageColor3 = Color3.fromRGB(210, 60, 60)
+resetIco.ScaleType = Enum.ScaleType.Fit
+task.spawn(function() ApplyIcon(resetIco, GetIcon("rotate-ccw")) end)
+local resetLbl = Instance.new("TextLabel", resetCard)
+resetLbl.Size = UDim2.new(0.45, 0, 0, 16)
+resetLbl.Position = UDim2.new(0, 34, 0, 10)
+resetLbl.BackgroundTransparency = 1
+resetLbl.Text = "Reset to Default"
+resetLbl.Font = Enum.Font.GothamBold
+resetLbl.TextColor3 = WindUI.CurrentTheme.Text
+resetLbl.TextSize = 12
+resetLbl.TextXAlignment = Enum.TextXAlignment.Left
+local resetSubLbl = Instance.new("TextLabel", resetCard)
+resetSubLbl.Size = UDim2.new(0.45, 0, 0, 14)
+resetSubLbl.Position = UDim2.new(0, 34, 0, 28)
+resetSubLbl.BackgroundTransparency = 1
+resetSubLbl.Text = "Restore all default values"
+resetSubLbl.Font = Enum.Font.Gotham
+resetSubLbl.TextColor3 = WindUI.CurrentTheme.SubText
+resetSubLbl.TextSize = 9
+resetSubLbl.TextXAlignment = Enum.TextXAlignment.Left
+local resetBtn = Instance.new("TextButton", resetCard)
+resetBtn.Size = UDim2.new(0, 80, 0, 28)
+resetBtn.Position = UDim2.new(1, -94, 0.5, -14)
+resetBtn.BackgroundColor3 = Color3.fromRGB(210, 60, 60)
+resetBtn.BackgroundTransparency = 0.78
+resetBtn.Text = "Reset"
+resetBtn.Font = Enum.Font.GothamBold
+resetBtn.TextColor3 = Color3.fromRGB(210, 60, 60)
+resetBtn.TextSize = 10
+Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0, 10)
+local resetBtnStroke = Instance.new("UIStroke", resetBtn)
+resetBtnStroke.Color = Color3.fromRGB(210, 60, 60)
+resetBtnStroke.Thickness = 1
+resetBtnStroke.Transparency = 0.5
+resetBtn.MouseEnter:Connect(function() Tween(resetBtn, {Time=0.15}, {BackgroundTransparency=0.5}) end)
+resetBtn.MouseLeave:Connect(function() Tween(resetBtn, {Time=0.15}, {BackgroundTransparency=0.78}) end)
+resetBtn.MouseButton1Click:Connect(function()
+    FlickEnabled  = false
+    AimbotEnabled = false
+    ShowFOVCircle = true
+    WallCheck     = true
+    HighlightESP  = false
+    TracerESP     = false
+    FlickFOV      = 80
+    FlickStrength = 0.12
+    FlickCooldown = 0.13
+    AimbotFOV     = 120
+    AimbotSmooth  = 0.25
+    WindUI:Notify("Settings", "All settings have been reset to default.", 3)
+end)
+local creditCard = Instance.new("Frame", AboutTab.Scroll)
+creditCard.Size = UDim2.new(0.95, 0, 0, 110)
+creditCard.BackgroundColor3 = WindUI.CurrentTheme.Secondary
+Instance.new("UICorner", creditCard).CornerRadius = UDim.new(0, 18)
+local ccStroke = Instance.new("UIStroke", creditCard)
+ccStroke.Color = WindUI.CurrentTheme.Accent
+ccStroke.Thickness = 1
+ccStroke.Transparency = 0.6
+local ccBar = Instance.new("Frame", creditCard)
+ccBar.Size = UDim2.new(0, 3, 0, 60)
+ccBar.Position = UDim2.new(0, 14, 0.5, -30)
+ccBar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+Instance.new("UICorner", ccBar).CornerRadius = UDim.new(1, 0)
+local ccTitle = Instance.new("TextLabel", creditCard)
+ccTitle.Size = UDim2.new(1, -40, 0, 18)
+ccTitle.Position = UDim2.new(0, 26, 0, 14)
+ccTitle.BackgroundTransparency = 1
+ccTitle.Text = "CREDITS"
+ccTitle.Font = Enum.Font.GothamBold
+ccTitle.TextColor3 = WindUI.CurrentTheme.Accent
+ccTitle.TextSize = 10
+ccTitle.TextXAlignment = Enum.TextXAlignment.Left
+local ccDev = Instance.new("TextLabel", creditCard)
+ccDev.Size = UDim2.new(1, -40, 0, 20)
+ccDev.Position = UDim2.new(0, 26, 0, 36)
+ccDev.BackgroundTransparency = 1
+ccDev.Text = "Developer  ·  Nanzzz"
+ccDev.Font = Enum.Font.GothamBold
+ccDev.TextColor3 = WindUI.CurrentTheme.Text
+ccDev.TextSize = 13
+ccDev.TextXAlignment = Enum.TextXAlignment.Left
+local ccRole = Instance.new("TextLabel", creditCard)
+ccRole.Size = UDim2.new(1, -40, 0, 16)
+ccRole.Position = UDim2.new(0, 26, 0, 58)
+ccRole.BackgroundTransparency = 1
+ccRole.Text = "UI Design  ·  Scripting"
+ccRole.Font = Enum.Font.GothamMedium
+ccRole.TextColor3 = WindUI.CurrentTheme.SubText
+ccRole.TextSize = 10
+ccRole.TextXAlignment = Enum.TextXAlignment.Left
+local ccDate = Instance.new("TextLabel", creditCard)
+ccDate.Size = UDim2.new(1, -40, 0, 14)
+ccDate.Position = UDim2.new(0, 26, 0, 84)
+ccDate.BackgroundTransparency = 1
+ccDate.Text = "Version  ·  v1.0"
+ccDate.Font = Enum.Font.Gotham
+ccDate.TextColor3 = WindUI.CurrentTheme.SubText
+ccDate.TextSize = 9
+ccDate.TextXAlignment = Enum.TextXAlignment.Left
+local socialHeader = Instance.new("TextLabel", AboutTab.Scroll)
+socialHeader.Size = UDim2.new(0.95, 0, 0, 18)
+socialHeader.BackgroundTransparency = 1
+socialHeader.Text = "SOCIAL MEDIA"
+socialHeader.Font = Enum.Font.GothamBold
+socialHeader.TextColor3 = WindUI.CurrentTheme.Accent
+socialHeader.TextSize = 9
+socialHeader.TextXAlignment = Enum.TextXAlignment.Left
+local function CreateSocialCard(parent, platform, link, iconName)
+    local card = Instance.new("Frame", parent)
+    card.Size = UDim2.new(0.95, 0, 0, 52)
+    card.BackgroundColor3 = WindUI.CurrentTheme.Secondary
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 18)
+    local cStroke = Instance.new("UIStroke", card)
+    cStroke.Color = WindUI.CurrentTheme.Border
+    cStroke.Thickness = 1
+    local bar = Instance.new("Frame", card)
+    bar.Size = UDim2.new(0, 3, 0, 26)
+    bar.Position = UDim2.new(0, 14, 0.5, -13)
+    bar.BackgroundColor3 = WindUI.CurrentTheme.Accent
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+    local ico = Instance.new("ImageLabel", card)
+    ico.Size = UDim2.new(0, 14, 0, 14)
+    ico.Position = UDim2.new(0, 26, 0.5, -7)
+    ico.BackgroundTransparency = 1
+    ico.ImageColor3 = WindUI.CurrentTheme.Accent
+    ico.ScaleType = Enum.ScaleType.Fit
+    task.spawn(function() ApplyIcon(ico, GetIcon(iconName or "link")) end)
+    local platLbl = Instance.new("TextLabel", card)
+    platLbl.Size = UDim2.new(0.45, 0, 0, 18)
+    platLbl.Position = UDim2.new(0, 46, 0, 8)
+    platLbl.BackgroundTransparency = 1
+    platLbl.Text = platform
+    platLbl.Font = Enum.Font.GothamBold
+    platLbl.TextColor3 = WindUI.CurrentTheme.Text
+    platLbl.TextSize = 11
+    platLbl.TextXAlignment = Enum.TextXAlignment.Left
+    local linkLbl = Instance.new("TextLabel", card)
+    linkLbl.Size = UDim2.new(0.55, 0, 0, 16)
+    linkLbl.Position = UDim2.new(0, 46, 0, 28)
+    linkLbl.BackgroundTransparency = 1
+    linkLbl.Text = link
+    linkLbl.Font = Enum.Font.Gotham
+    linkLbl.TextColor3 = WindUI.CurrentTheme.SubText
+    linkLbl.TextSize = 9
+    linkLbl.TextXAlignment = Enum.TextXAlignment.Left
+    linkLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    local copyBtn = Instance.new("TextButton", card)
+    copyBtn.Size = UDim2.new(0, 60, 0, 24)
+    copyBtn.Position = UDim2.new(1, -72, 0.5, -12)
+    copyBtn.BackgroundColor3 = WindUI.CurrentTheme.Accent
+    copyBtn.BackgroundTransparency = 0.82
+    copyBtn.Text = "Copy"
+    copyBtn.Font = Enum.Font.GothamBold
+    copyBtn.TextColor3 = WindUI.CurrentTheme.Accent
+    copyBtn.TextSize = 10
+    Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(1, 0)
+    local copyStroke = Instance.new("UIStroke", copyBtn)
+    copyStroke.Color = WindUI.CurrentTheme.Accent
+    copyStroke.Thickness = 1
+    copyStroke.Transparency = 0.5
+    copyBtn.MouseEnter:Connect(function() Tween(copyBtn, {Time=0.15}, {BackgroundTransparency=0.6}) end)
+    copyBtn.MouseLeave:Connect(function() Tween(copyBtn, {Time=0.15}, {BackgroundTransparency=0.82}) end)
+    copyBtn.MouseButton1Click:Connect(function()
+        pcall(function() setclipboard(link) end)
+        copyBtn.Text = "✓"
+        copyBtn.TextColor3 = Color3.fromRGB(100, 220, 140)
+        Tween(copyBtn, {Time=0.15}, {BackgroundTransparency=0.5})
+        WindUI:Notify("Copied!", platform .. " link copied.", 2)
+        task.delay(1.5, function()
+            copyBtn.Text = "Copy"
+            copyBtn.TextColor3 = WindUI.CurrentTheme.Accent
+            Tween(copyBtn, {Time=0.15}, {BackgroundTransparency=0.82})
+        end)
+    end)
+end
+CreateSocialCard(AboutTab.Scroll, "TikTok",  "https://tiktok.com/@nnzz0_",  "music-2")
+CreateSocialCard(AboutTab.Scroll, "Discord", "nanzzz.js",                    "message-circle")
+CreateSocialCard(AboutTab.Scroll, "YouTube", "https://youtube.com/@nanzzz", "youtube")
+WindUI:Notify("Fyor Hub", "Fyor Hub loaded. Welcome!", 5)
