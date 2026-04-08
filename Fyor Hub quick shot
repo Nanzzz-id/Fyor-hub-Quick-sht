@@ -86,11 +86,11 @@ local function isVisible(targetPart)
 end
 local function getTargetPart(char)
     if not char then return nil end
-    if AimPart == "Head" then 
+    if AimPart == "Head" then
         return char:FindFirstChild("Head")
-    elseif AimPart == "HumanoidRootPart" then 
+    elseif AimPart == "HumanoidRootPart" then
         return char:FindFirstChild("HumanoidRootPart")
-    elseif AimPart == "Torso" then 
+    elseif AimPart == "Torso" then
         return char:FindFirstChild("UpperTorso") or char:FindFirstChild("LowerTorso") or char:FindFirstChild("HumanoidRootPart")
     end
     return char:FindFirstChild("Head")
@@ -152,9 +152,9 @@ local function getClosestFlick()
             local pos, onScreen = camera:WorldToViewportPoint(part.Position)
             if onScreen and isVisible(part) then
                 local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
-                if dist < shortest then 
-                    shortest = dist 
-                    closest = part 
+                if dist < shortest then
+                    shortest = dist
+                    closest = part
                 end
             end
         end
@@ -172,9 +172,9 @@ local function getAimbotTarget()
             local pos, onScreen = camera:WorldToViewportPoint(part.Position)
             if onScreen and (not WallCheck or isVisible(part)) then
                 local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
-                if dist < shortest then 
-                    shortest = dist 
-                    closest = part 
+                if dist < shortest then
+                    shortest = dist
+                    closest = part
                 end
             end
         end
@@ -208,6 +208,8 @@ RunService.RenderStepped:Connect(function()
     FOVCircle.Visible = show
     updateESP()
 end)
+
+-- ── HOME TAB ──────────────────────────────────────────────────────────────
 local HomeTab = Window:CreateTab("Home", "house")
 local banner = Instance.new("Frame", HomeTab.Scroll)
 banner.Size = UDim2.new(0.95, 0, 0, 72)
@@ -323,9 +325,11 @@ HomeTab:CreateButton("Copy Job ID", function()
     pcall(function() setclipboard(game.JobId) end)
     WindUI:Notify("Clipboard", "Job ID copied successfully.", 2)
 end, "clipboard-copy")
-local subTabs   = HomeTab:CreateTabDropdown("More", {"Settings", "About"}, "more-horizontal")
+local subTabs = HomeTab:CreateTabDropdown("More", {"Settings", "About"}, "more-horizontal")
 local SettingsTab = subTabs[1]
-local AboutTab    = subTabs[2]
+local AboutTab = subTabs[2]
+
+-- ── MAIN TAB ──────────────────────────────────────────────────────────────
 local MainTab = Window:CreateTab("Main", "crosshair")
 MainTab:CreateLabel("Flick & Aimbot")
 MainTab:CreateDivider("── Flick ──")
@@ -342,13 +346,19 @@ MainTab:CreateDropdown("Aim Part", {"Head", "HumanoidRootPart", "Torso"}, functi
 MainTab:CreateDivider("── General ──")
 MainTab:CreateToggle("Show FOV Circle", true, function(v) ShowFOVCircle = v end)
 MainTab:CreateToggle("Wall Check", true, function(v) WallCheck = v end)
-MainTab:CreateDivider("── Hitbox Expander ──")
-MainTab:CreateToggle("Enable Hitbox", false, function(v)
+
+-- ── HITBOX TAB ────────────────────────────────────────────────────────────
+local HitboxTab = Window:CreateTab("Hitbox", "box")
+HitboxTab:CreateLabel("Hitbox Expander")
+HitboxTab:CreateDivider("── Hitbox ──")
+HitboxTab:CreateToggle("Enable Hitbox", false, function(v)
     HitboxEnabled = v
     WindUI:Notify("Hitbox", "Hitbox Expander: " .. (v and "ON" or "OFF"), 2)
 end)
-MainTab:CreateSlider("Hitbox Size", 2, 25, 6, function(v) HitboxSize = v end)
-MainTab:CreateSlider("Hitbox Transparency", 0, 9, 7, function(v) HitboxTransparency = v / 10 end)
+HitboxTab:CreateSlider("Hitbox Size", 2, 25, 6, function(v) HitboxSize = v end)
+HitboxTab:CreateSlider("Hitbox Transparency", 0, 9, 7, function(v) HitboxTransparency = v / 10 end)
+
+-- ── ESP TAB ───────────────────────────────────────────────────────────────
 local ESPTab = Window:CreateTab("ESP", "eye")
 ESPTab:CreateLabel("ESP & Visual")
 ESPTab:CreateDivider("── Highlight ──")
@@ -364,6 +374,8 @@ ESPTab:CreateDropdown("Tracer Color", {"Red", "Green", "Blue", "White", "Yellow"
     TracerColor = c[v] or Color3.fromRGB(255,0,0)
     for _, line in pairs(Tracers) do if line then line.Color = TracerColor end end
 end)
+
+-- ── HELPERS (Settings & About) ────────────────────────────────────────────
 local function Tween(obj, info, goal)
     local TweenService = game:GetService("TweenService")
     local t = TweenService:Create(obj,
@@ -438,6 +450,8 @@ local function MakeSectionHeader(parent, icon, title, subtitle)
     subLbl.TextSize = 10
     subLbl.TextXAlignment = Enum.TextXAlignment.Left
 end
+
+-- ── SETTINGS TAB ──────────────────────────────────────────────────────────
 local currentKey = Enum.KeyCode.RightShift
 local bindingActive = false
 MakeSectionHeader(SettingsTab.Scroll, "keyboard", "Toggle Keybind", "Key used to show / hide the UI")
@@ -898,13 +912,17 @@ resetBtn.MouseButton1Click:Connect(function()
     WallCheck     = true
     HighlightESP  = false
     TracerESP     = false
+    HitboxEnabled = false
     FlickFOV      = 80
     FlickStrength = 0.12
     FlickCooldown = 0.13
     AimbotFOV     = 120
     AimbotSmooth  = 0.25
+    HitboxSize    = 6
     WindUI:Notify("Settings", "All settings have been reset to default.", 3)
 end)
+
+-- ── ABOUT TAB ─────────────────────────────────────────────────────────────
 local creditCard = Instance.new("Frame", AboutTab.Scroll)
 creditCard.Size = UDim2.new(0.95, 0, 0, 110)
 creditCard.BackgroundColor3 = WindUI.CurrentTheme.Secondary
@@ -1032,5 +1050,5 @@ local function CreateSocialCard(parent, platform, link, iconName)
 end
 CreateSocialCard(AboutTab.Scroll, "TikTok",  "https://tiktok.com/@nnzz0_",  "music-2")
 CreateSocialCard(AboutTab.Scroll, "Discord", "nanzzz.js",                    "message-circle")
-CreateSocialCard(AboutTab.Scroll, "YouTube", "https://youtube.com/@nanzzz", "youtube")
+CreateSocialCard(AboutTab.Scroll, "YouTube", "https://youtube.com/@nanzzz",  "youtube")
 WindUI:Notify("Fyor Hub", "Fyor Hub loaded. Welcome!", 5)
