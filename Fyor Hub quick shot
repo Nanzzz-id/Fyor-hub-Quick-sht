@@ -209,7 +209,6 @@ RunService.RenderStepped:Connect(function()
     updateESP()
 end)
 
--- ── HOME TAB ──────────────────────────────────────────────────────────────
 local HomeTab = Window:CreateTab("Home", "house")
 local banner = Instance.new("Frame", HomeTab.Scroll)
 banner.Size = UDim2.new(0.95, 0, 0, 72)
@@ -329,7 +328,6 @@ local subTabs = HomeTab:CreateTabDropdown("More", {"Settings", "About"}, "more-h
 local SettingsTab = subTabs[1]
 local AboutTab = subTabs[2]
 
--- ── MAIN TAB ──────────────────────────────────────────────────────────────
 local MainTab = Window:CreateTab("Main", "crosshair")
 MainTab:CreateLabel("Flick & Aimbot")
 MainTab:CreateDivider("── Flick ──")
@@ -347,7 +345,6 @@ MainTab:CreateDivider("── General ──")
 MainTab:CreateToggle("Show FOV Circle", true, function(v) ShowFOVCircle = v end)
 MainTab:CreateToggle("Wall Check", true, function(v) WallCheck = v end)
 
--- ── HITBOX TAB ────────────────────────────────────────────────────────────
 local HitboxTab = Window:CreateTab("Hitbox", "box")
 HitboxTab:CreateLabel("Hitbox Expander")
 HitboxTab:CreateDivider("── Hitbox ──")
@@ -358,7 +355,6 @@ end)
 HitboxTab:CreateSlider("Hitbox Size", 2, 25, 6, function(v) HitboxSize = v end)
 HitboxTab:CreateSlider("Hitbox Transparency", 0, 9, 7, function(v) HitboxTransparency = v / 10 end)
 
--- ── ESP TAB ───────────────────────────────────────────────────────────────
 local ESPTab = Window:CreateTab("ESP", "eye")
 ESPTab:CreateLabel("ESP & Visual")
 ESPTab:CreateDivider("── Highlight ──")
@@ -375,7 +371,6 @@ ESPTab:CreateDropdown("Tracer Color", {"Red", "Green", "Blue", "White", "Yellow"
     for _, line in pairs(Tracers) do if line then line.Color = TracerColor end end
 end)
 
--- ── HELPERS (Settings & About) ────────────────────────────────────────────
 local function Tween(obj, info, goal)
     local TweenService = game:GetService("TweenService")
     local t = TweenService:Create(obj,
@@ -451,7 +446,6 @@ local function MakeSectionHeader(parent, icon, title, subtitle)
     subLbl.TextXAlignment = Enum.TextXAlignment.Left
 end
 
--- ── SETTINGS TAB ──────────────────────────────────────────────────────────
 local currentKey = Enum.KeyCode.RightShift
 local bindingActive = false
 MakeSectionHeader(SettingsTab.Scroll, "keyboard", "Toggle Keybind", "Key used to show / hide the UI")
@@ -922,7 +916,6 @@ resetBtn.MouseButton1Click:Connect(function()
     WindUI:Notify("Settings", "All settings have been reset to default.", 3)
 end)
 
--- ── ABOUT TAB ─────────────────────────────────────────────────────────────
 local creditCard = Instance.new("Frame", AboutTab.Scroll)
 creditCard.Size = UDim2.new(0.95, 0, 0, 110)
 creditCard.BackgroundColor3 = WindUI.CurrentTheme.Secondary
