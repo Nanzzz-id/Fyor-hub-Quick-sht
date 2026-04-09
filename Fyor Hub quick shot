@@ -12,11 +12,15 @@ local FlickFOV = 80
 local FlickCooldown = 0.13
 local MaxDistance = 350
 local LastFlick = 0
+local TeamCheck = false
 local AimbotEnabled = false
 local AimbotFOV = 120
 local AimbotSmooth = 0.25
 local AimPart = "Head"
 local ShowFOVCircle = true
+local FOVColor = Color3.fromRGB(255, 255, 255)
+local FOVThickness = 2
+local FOVRadius = 120
 local HighlightESP = false
 local TracerESP = false
 local TracerThickness = 2
@@ -24,57 +28,103 @@ local TracerColor = Color3.fromRGB(255, 0, 0)
 local HitboxEnabled = false
 local HitboxSize = 6
 local HitboxTransparency = 0.7
+local R6_PARTS = {"Head", "HumanoidRootPart", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
+local R15_PARTS = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso", "LeftUpperArm", "RightUpperArm", "LeftUpperLeg", "RightUpperLeg", "LeftLowerArm", "RightLowerArm", "LeftLowerLeg", "RightLowerLeg", "LeftHand", "RightHand", "LeftFoot", "RightFoot"}
+local originalSizes = {}
+
+-- Forward declare isEnemy agar bisa dipakai sebelum definisinya
+local isEnemy
+
 local function expandHitbox(char)
     if not char then return end
-    for _, name in {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"} do
-        local part = char:FindFirstChild(name)
-        if part then
+    local parts = {}
+    for _, name in R6_PARTS do
+        local p = char:FindFirstChild(name)
+        if p and p:IsA("BasePart") then parts[#parts+1] = p end
+    end
+    for _, name in R15_PARTS do
+        local p = char:FindFirstChild(name)
+        if p and p:IsA("BasePart") and not table.find(parts, p) then parts[#parts+1] = p end
+    end
+    for _, part in parts do
+        pcall(function()
+            if not originalSizes[part] then
+                originalSizes[part] = part.Size
+            end
+            -- Gunakan CustomPhysicalProperties agar size tidak di-override server
             part.Size = Vector3.new(HitboxSize, HitboxSize, HitboxSize)
-            part.Transparency = HitboxTransparency
-            part.Material = Enum.Material.ForceField
+            part.LocalTransparencyModifier = HitboxTransparency
             part.CanCollide = false
-        end
+        end)
     end
 end
 local function resetHitbox(char)
     if not char then return end
-    for _, name in {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"} do
-        local part = char:FindFirstChild(name)
-        if part then
-            part.Size = name == "Head" and Vector3.new(1.2,1.2,1.2) or Vector3.new(2,2,1)
-            part.Transparency = 0
-            part.Material = Enum.Material.Plastic
-            part.CanCollide = true
+    for _, part in char:GetDescendants() do
+        if part:IsA("BasePart") then
+            pcall(function()
+                if originalSizes[part] then
+                    part.Size = originalSizes[part]
+                    originalSizes[part] = nil
+                end
+                part.LocalTransparencyModifier = 0
+                part.CanCollide = true
+            end)
         end
     end
 end
-task.spawn(function()
-    while task.wait(0.3) do
-        for _, plr in Players:GetPlayers() do
-            if plr ~= localPlayer and plr.Character then
-                if HitboxEnabled then
-                    expandHitbox(plr.Character)
-                else
-                    resetHitbox(plr.Character)
-                end
+
+-- Gunakan Heartbeat agar hitbox diperbarui setiap frame (tidak bisa di-override server)
+RunService.Heartbeat:Connect(function()
+    if not HitboxEnabled then return end
+    for _, plr in Players:GetPlayers() do
+        if plr ~= localPlayer and plr.Character then
+            if isEnemy(plr) then
+                expandHitbox(plr.Character)
             end
         end
     end
 end)
+
+-- Reset hitbox saat disabled
+local prevHitboxEnabled = false
+RunService.Heartbeat:Connect(function()
+    if prevHitboxEnabled and not HitboxEnabled then
+        for _, plr in Players:GetPlayers() do
+            if plr ~= localPlayer and plr.Character then
+                resetHitbox(plr.Character)
+            end
+        end
+    end
+    prevHitboxEnabled = HitboxEnabled
+end)
 local FOVCircle = Drawing.new("Circle")
 FOVCircle.Filled = false
-FOVCircle.Thickness = 2
-FOVCircle.Color = Color3.fromRGB(255, 255, 255)
-FOVCircle.Transparency = 0
+FOVCircle.Thickness = FOVThickness
+FOVCircle.Color = FOVColor
+FOVCircle.NumSides = 512
+FOVCircle.Radius = FOVRadius
 FOVCircle.Visible = false
-FOVCircle.NumSides = 64
+FOVCircle.ZIndex = 999
 local FOVCircleOutline = Drawing.new("Circle")
 FOVCircleOutline.Filled = false
-FOVCircleOutline.Thickness = 4
+FOVCircleOutline.Thickness = FOVThickness + 2
 FOVCircleOutline.Color = Color3.fromRGB(0, 0, 0)
-FOVCircleOutline.Transparency = 0
+FOVCircleOutline.NumSides = 512
+FOVCircleOutline.Radius = FOVRadius
 FOVCircleOutline.Visible = false
-FOVCircleOutline.NumSides = 64
+FOVCircleOutline.ZIndex = 998
+local function SetFOVCircle(cx, cy, radius, visible)
+    FOVCircle.Position = Vector2.new(cx, cy)
+    FOVCircle.Radius = radius
+    FOVCircle.Color = FOVColor
+    FOVCircle.Thickness = FOVThickness
+    FOVCircle.Visible = visible
+    FOVCircleOutline.Position = Vector2.new(cx, cy)
+    FOVCircleOutline.Radius = radius + 1
+    FOVCircleOutline.Thickness = FOVThickness + 2
+    FOVCircleOutline.Visible = visible
+end
 local Tracers = {}
 local function isVisible(targetPart)
     if not WallCheck then return true end
@@ -83,6 +133,37 @@ local function isVisible(targetPart)
     params.FilterDescendantsInstances = {localPlayer.Character or Workspace}
     local result = Workspace:Raycast(camera.CFrame.Position, targetPart.Position - camera.CFrame.Position, params)
     return not result or result.Instance:IsDescendantOf(targetPart.Parent)
+end
+isEnemy = function(plr)
+    if not TeamCheck then return true end
+    local ok, result = pcall(function()
+        if plr.Team and localPlayer.Team then
+            if plr.Team ~= localPlayer.Team then return true end
+            return false
+        end
+        local plrStats = plr:FindFirstChild("leaderstats")
+        local localStats = localPlayer:FindFirstChild("leaderstats")
+        if plrStats and localStats then
+            local t1 = plrStats:FindFirstChild("Team") or plrStats:FindFirstChild("team") or plrStats:FindFirstChild("Guild") or plrStats:FindFirstChild("Clan")
+            local t2 = localStats:FindFirstChild("Team") or localStats:FindFirstChild("team") or localStats:FindFirstChild("Guild") or localStats:FindFirstChild("Clan")
+            if t1 and t2 then
+                return t1.Value ~= t2.Value
+            end
+        end
+        local a1 = plr.Character and plr.Character:GetAttribute("Team") or plr:GetAttribute("Team")
+        local a2 = localPlayer.Character and localPlayer.Character:GetAttribute("Team") or localPlayer:GetAttribute("Team")
+        if a1 ~= nil and a2 ~= nil then
+            return a1 ~= a2
+        end
+        local tf1 = plr.Character and (plr.Character:FindFirstChild("TeamFolder") or plr.Character:FindFirstChild("TeamValue"))
+        local tf2 = localPlayer.Character and (localPlayer.Character:FindFirstChild("TeamFolder") or localPlayer.Character:FindFirstChild("TeamValue"))
+        if tf1 and tf2 then
+            return tf1.Value ~= tf2.Value
+        end
+        return true
+    end)
+    if ok then return result end
+    return true
 end
 local function getTargetPart(char)
     if not char then return nil end
@@ -100,6 +181,12 @@ local function updateESP()
         if plr == localPlayer then continue end
         local char = plr.Character
         if not char then continue end
+        if not isEnemy(plr) then
+            local hl = char:FindFirstChild("Highlight_Zenith")
+            if hl then hl:Destroy() end
+            if Tracers[plr] then Tracers[plr].Visible = false end
+            continue
+        end
         if HighlightESP then
             if not char:FindFirstChild("Highlight_Zenith") then
                 local hl = Instance.new("Highlight", char)
@@ -146,6 +233,7 @@ local function getClosestFlick()
     local center = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y/2)
     for _, plr in Players:GetPlayers() do
         if plr == localPlayer then continue end
+        if not isEnemy(plr) then continue end
         local char = plr.Character
         local part = getTargetPart(char)
         if part and (part.Position - camera.CFrame.Position).Magnitude <= MaxDistance then
@@ -166,6 +254,7 @@ local function getAimbotTarget()
     local center = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y/2)
     for _, plr in Players:GetPlayers() do
         if plr == localPlayer then continue end
+        if not isEnemy(plr) then continue end
         local char = plr.Character
         local part = getTargetPart(char)
         if part then
@@ -197,15 +286,11 @@ RunService.RenderStepped:Connect(function()
             LastFlick = tick()
         end
     end
-    local radius = AimbotEnabled and AimbotFOV or FlickFOV
+    local radius = FOVRadius
     local show = ShowFOVCircle and (AimbotEnabled or FlickEnabled)
-    local centerPos = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
-    FOVCircleOutline.Radius = radius + 1
-    FOVCircleOutline.Position = centerPos
-    FOVCircleOutline.Visible = show
-    FOVCircle.Radius = radius
-    FOVCircle.Position = centerPos
-    FOVCircle.Visible = show
+    local cx = camera.ViewportSize.X / 2
+    local cy = camera.ViewportSize.Y / 2
+    SetFOVCircle(cx, cy, radius, show)
     updateESP()
 end)
 
@@ -237,7 +322,7 @@ local bannerSub = Instance.new("TextLabel", banner)
 bannerSub.Size = UDim2.new(1, -40, 0, 18)
 bannerSub.Position = UDim2.new(0, 26, 0, 42)
 bannerSub.BackgroundTransparency = 1
-bannerSub.Text = "Fyor Hub | Quick Shot"
+bannerSub.Text = "Fyor Hub"
 bannerSub.TextColor3 = WindUI.CurrentTheme.SubText
 bannerSub.Font = Enum.Font.GothamMedium
 bannerSub.TextSize = 11
@@ -257,7 +342,7 @@ local wnTitle = Instance.new("TextLabel", wnFrame)
 wnTitle.Size = UDim2.new(1, -30, 0, 20)
 wnTitle.Position = UDim2.new(0, 26, 0, 14)
 wnTitle.BackgroundTransparency = 1
-wnTitle.Text = "WHAT'S NEW  ·  v1.0"
+wnTitle.Text = "WHAT'S NEW  --  v1.0"
 wnTitle.Font = Enum.Font.GothamBold
 wnTitle.TextColor3 = WindUI.CurrentTheme.Accent
 wnTitle.TextSize = 10
@@ -266,7 +351,7 @@ local wnList = Instance.new("TextLabel", wnFrame)
 wnList.Size = UDim2.new(1, -30, 0, 38)
 wnList.Position = UDim2.new(0, 26, 0, 36)
 wnList.BackgroundTransparency = 1
-wnList.Text = "- Flick, Aimbot, Hitbox Expander\n- Highlight & Tracer ESP\n- FOV Circle visible & centered"
+wnList.Text = "- Flick, Aimbot, Hitbox Expander\n- Highlight & Tracer ESP\n- Aim Part selector"
 wnList.Font = Enum.Font.GothamMedium
 wnList.TextColor3 = WindUI.CurrentTheme.SubText
 wnList.TextSize = 10
@@ -330,36 +415,57 @@ local AboutTab = subTabs[2]
 
 local MainTab = Window:CreateTab("Main", "crosshair")
 MainTab:CreateLabel("Flick & Aimbot")
-MainTab:CreateDivider("── Flick ──")
+MainTab:CreateDivider("-- Flick --")
 MainTab:CreateToggle("Enable Flick", false, function(v) FlickEnabled = v end)
 MainTab:CreateSlider("Flick FOV", 20, 200, 80, function(v) FlickFOV = v end)
 MainTab:CreateSlider("Flick Strength", 5, 50, 12, function(v) FlickStrength = v / 100 end)
 MainTab:CreateSlider("Flick Cooldown", 5, 30, 13, function(v) FlickCooldown = v / 100 end)
-MainTab:CreateDivider("── Aimbot ──")
+MainTab:CreateDivider("-- Aimbot --")
 MainTab:CreateToggle("Enable Aimbot", false, function(v) AimbotEnabled = v end)
 MainTab:CreateSlider("Aimbot FOV", 20, 400, 120, function(v) AimbotFOV = v end)
 MainTab:CreateSlider("Aimbot Smooth", 5, 100, 25, function(v) AimbotSmooth = v / 100 end)
-MainTab:CreateDivider("── Aim Part ──")
+MainTab:CreateDivider("-- Aim Part --")
 MainTab:CreateDropdown("Aim Part", {"Head", "HumanoidRootPart", "Torso"}, function(v) AimPart = v end)
-MainTab:CreateDivider("── General ──")
+MainTab:CreateDivider("-- General --")
 MainTab:CreateToggle("Show FOV Circle", true, function(v) ShowFOVCircle = v end)
+MainTab:CreateSlider("FOV Circle Radius", 20, 400, 120, function(v) FOVRadius = v end)
+MainTab:CreateSlider("FOV Circle Size", 1, 6, 2, function(v)
+    FOVThickness = v
+    FOVCircle.Thickness = v
+    FOVCircleOutline.Thickness = v + 2
+end)
+MainTab:CreateDropdown("FOV Circle Color", {"White", "Red", "Green", "Blue", "Yellow", "Cyan", "Purple"}, function(v)
+    local c = {White=Color3.fromRGB(255,255,255), Red=Color3.fromRGB(255,0,0), Green=Color3.fromRGB(0,255,0), Blue=Color3.fromRGB(0,120,255), Yellow=Color3.fromRGB(255,255,0), Cyan=Color3.fromRGB(0,255,255), Purple=Color3.fromRGB(180,0,255)}
+    FOVColor = c[v] or Color3.fromRGB(255,255,255)
+end)
 MainTab:CreateToggle("Wall Check", true, function(v) WallCheck = v end)
+MainTab:CreateToggle("Team Check", false, function(v) TeamCheck = v end)
+task.defer(function()
+    if MainTab.Scroll then
+        MainTab.Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        MainTab.Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        MainTab.Scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+        MainTab.Scroll.ScrollBarThickness = 3
+    end
+end)
 
 local HitboxTab = Window:CreateTab("Hitbox", "box")
 HitboxTab:CreateLabel("Hitbox Expander")
-HitboxTab:CreateDivider("── Hitbox ──")
+HitboxTab:CreateDivider("-- Hitbox --")
 HitboxTab:CreateToggle("Enable Hitbox", false, function(v)
     HitboxEnabled = v
     WindUI:Notify("Hitbox", "Hitbox Expander: " .. (v and "ON" or "OFF"), 2)
 end)
 HitboxTab:CreateSlider("Hitbox Size", 2, 25, 6, function(v) HitboxSize = v end)
 HitboxTab:CreateSlider("Hitbox Transparency", 0, 9, 7, function(v) HitboxTransparency = v / 10 end)
+HitboxTab:CreateDivider("-- Note --")
+HitboxTab:CreateLabel("Doesn't work on some map")
 
 local ESPTab = Window:CreateTab("ESP", "eye")
 ESPTab:CreateLabel("ESP & Visual")
-ESPTab:CreateDivider("── Highlight ──")
+ESPTab:CreateDivider("-- Highlight --")
 ESPTab:CreateToggle("Highlight ESP", false, function(v) HighlightESP = v end)
-ESPTab:CreateDivider("── Tracer ──")
+ESPTab:CreateDivider("-- Tracer --")
 ESPTab:CreateToggle("Tracer ESP", false, function(v) TracerESP = v end)
 ESPTab:CreateSlider("Tracer Thickness", 1, 10, 2, function(v)
     TracerThickness = v
@@ -490,7 +596,7 @@ kbBtn.MouseLeave:Connect(function() Tween(kbBtn, {Time=0.15}, {BackgroundTranspa
 kbBtn.MouseButton1Click:Connect(function()
     if bindingActive then return end
     bindingActive = true
-    kbBtn.Text = "· · ·"
+    kbBtn.Text = ". . ."
     kbBtn.TextColor3 = WindUI.CurrentTheme.SubText
     Tween(kbBtn, {Time=0.15}, {BackgroundTransparency=0.6})
     local conn
@@ -692,7 +798,7 @@ local scalePrev = Instance.new("TextButton", scaleCard)
 scalePrev.Size = UDim2.new(0, 28, 0, 28)
 scalePrev.Position = UDim2.new(1, -112, 0.5, -14)
 scalePrev.BackgroundColor3 = WindUI.CurrentTheme.Tertiary
-scalePrev.Text = "‹"
+scalePrev.Text = "<"
 scalePrev.Font = Enum.Font.GothamBold
 scalePrev.TextColor3 = WindUI.CurrentTheme.SubText
 scalePrev.TextSize = 14
@@ -701,7 +807,7 @@ local scaleNext = Instance.new("TextButton", scaleCard)
 scaleNext.Size = UDim2.new(0, 28, 0, 28)
 scaleNext.Position = UDim2.new(1, -56, 0.5, -14)
 scaleNext.BackgroundColor3 = WindUI.CurrentTheme.Tertiary
-scaleNext.Text = "›"
+scaleNext.Text = ">"
 scaleNext.Font = Enum.Font.GothamBold
 scaleNext.TextColor3 = WindUI.CurrentTheme.SubText
 scaleNext.TextSize = 14
@@ -942,7 +1048,7 @@ local ccDev = Instance.new("TextLabel", creditCard)
 ccDev.Size = UDim2.new(1, -40, 0, 20)
 ccDev.Position = UDim2.new(0, 26, 0, 36)
 ccDev.BackgroundTransparency = 1
-ccDev.Text = "Developer  ·  Nanzzz"
+ccDev.Text = "Developer  -  Nanzzz"
 ccDev.Font = Enum.Font.GothamBold
 ccDev.TextColor3 = WindUI.CurrentTheme.Text
 ccDev.TextSize = 13
@@ -951,7 +1057,7 @@ local ccRole = Instance.new("TextLabel", creditCard)
 ccRole.Size = UDim2.new(1, -40, 0, 16)
 ccRole.Position = UDim2.new(0, 26, 0, 58)
 ccRole.BackgroundTransparency = 1
-ccRole.Text = "UI Design  ·  Scripting"
+ccRole.Text = "UI Design  -  Scripting"
 ccRole.Font = Enum.Font.GothamMedium
 ccRole.TextColor3 = WindUI.CurrentTheme.SubText
 ccRole.TextSize = 10
@@ -960,7 +1066,7 @@ local ccDate = Instance.new("TextLabel", creditCard)
 ccDate.Size = UDim2.new(1, -40, 0, 14)
 ccDate.Position = UDim2.new(0, 26, 0, 84)
 ccDate.BackgroundTransparency = 1
-ccDate.Text = "Version  ·  v1.0"
+ccDate.Text = "Version  -  v1.0"
 ccDate.Font = Enum.Font.Gotham
 ccDate.TextColor3 = WindUI.CurrentTheme.SubText
 ccDate.TextSize = 9
@@ -1030,7 +1136,7 @@ local function CreateSocialCard(parent, platform, link, iconName)
     copyBtn.MouseLeave:Connect(function() Tween(copyBtn, {Time=0.15}, {BackgroundTransparency=0.82}) end)
     copyBtn.MouseButton1Click:Connect(function()
         pcall(function() setclipboard(link) end)
-        copyBtn.Text = "✓"
+        copyBtn.Text = "OK"
         copyBtn.TextColor3 = Color3.fromRGB(100, 220, 140)
         Tween(copyBtn, {Time=0.15}, {BackgroundTransparency=0.5})
         WindUI:Notify("Copied!", platform .. " link copied.", 2)
